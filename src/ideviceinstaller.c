@@ -21,6 +21,10 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301
  * USA
  */
+
+// Supprt %llu, %z in format strings on mingw
+#define __USE_MINGW_ANSI_STDIO 1
+
 #ifdef HAVE_CONFIG_H
 #include <config.h>
 #endif
@@ -50,6 +54,12 @@
 #include <plist/plist.h>
 
 #include <zip.h>
+
+
+#ifdef WIN32
+#include <windows.h>
+#include <asprintf.h>
+#endif
 
 #ifndef ZIP_CODEC_ENCODE
 // this is required for old libzip...
@@ -332,10 +342,15 @@ static void idevice_event_callback(const idevice_event_t* event, void* userdata)
 
 static void idevice_wait_for_command_to_complete()
 {
+	#ifndef WIN32
 	struct timespec ts;
 	ts.tv_sec = 0;
 	ts.tv_nsec = 50000000;
 	is_device_connected = 1;
+
+	#else
+	unsigned long sleep_duration = 500;
+	#endif
 
 	/* subscribe to make sure to exit on device removal */
 	idevice_event_subscribe(idevice_event_callback, NULL);
@@ -343,12 +358,21 @@ static void idevice_wait_for_command_to_complete()
 	/* wait for command to complete */
 	while (wait_for_command_complete && !command_completed && !err_occurred
 		   && !notified && is_device_connected) {
+
+		#ifndef WIN32
 		nanosleep(&ts, NULL);
+		#else
+		 Sleep(sleep_duration);
+		#endif
 	}
 
 	/* wait some time if a notification is expected */
 	while (notification_expected && !notified && !err_occurred && is_device_connected) {
+		#ifndef WIN32
 		nanosleep(&ts, NULL);
+		#else
+		 Sleep(sleep_duration);
+		#endif
 	}
 
 	idevice_event_unsubscribe();
@@ -903,7 +927,7 @@ run_again:
 					dstpath = NULL;
 
 					zip_uint64_t zfsize = 0;
-					while (zfsize < zs.size) {
+					while (zfsize < (zip_int64_t)zs.size) {
 						zip_int64_t amount = zip_fread(zfile, buf, sizeof(buf));
 						if (amount == 0) {
 							break;
@@ -911,7 +935,7 @@ run_again:
 
 						if (amount > 0) {
 							uint32_t written, total = 0;
-							while (total < amount) {
+							while ((zip_int64_t) total < amount) {
 								written = 0;
 								if (afc_file_write(afc, af, buf, amount, &written) !=
 									AFC_E_SUCCESS) {
@@ -920,7 +944,7 @@ run_again:
 								}
 								total += written;
 							}
-							if (total != amount) {
+							if ((zip_int64_t)total != amount) {
 								fprintf(stderr, "Error: wrote only %d of %" PRIi64 "\n", total, amount);
 								afc_file_close(afc, af);
 								zip_fclose(zfile);
